@@ -2,10 +2,10 @@
 
 `timescale 1ns/100ps
 `default_nettype none
-module tb_axis_width_conv_narrow_wide;
+module tb_axis_width_conv_wide_narrow;
 
-  localparam N               = 8;
-  localparam M               = 24;
+  localparam N               = 24;
+  localparam M               = 8;
 
   int        testcase        = -1;
   int        testcase_done   = 0;
@@ -22,7 +22,7 @@ module tb_axis_width_conv_narrow_wide;
   logic         m_axis_tfirst;
   logic         m_axis_tvalid;
 
-  axis_width_conv_narrow_wide #(
+  axis_width_conv_wide_narrow #(
     .N(N),
     .M(M))
   dut0 (
@@ -130,8 +130,6 @@ module tb_axis_width_conv_narrow_wide;
     automatic bit frame_error     = 1'b0;
     automatic bit first           = 1'b1;
 
-    results = new [1];
-
     for (int i = 0; i < $size(fifo_data); i = i + 1) begin
       fifo_tmp     = $urandom();
       fifo_data[i] = {{1{
@@ -142,36 +140,20 @@ module tb_axis_width_conv_narrow_wide;
       $display("%3d :: %s %h", i, (fifo_data[i][N] === 1'b1) ? "t" : " ", fifo_data[i][N-1:0]);
     end
 
-    for (int i = 0; i < $size(fifo_data);) begin
-      if (state == 0) begin
-        frame_error = 1'b0;
-        tfirst = fifo_data[i][N];
-      end else if (fifo_data[i][N] == 1'b1) begin
-        frame_error = 1'b1;
+    foreach (fifo_data[i]) begin
+      for (int j = 0; j < N/M; j = j + 1) begin
+        automatic result_t r;
+        r.first                   = (j == 0) && fifo_data[i][N];
+        r.data                    = fifo_data[i][(N-j*M-1)-:M];
+        results                   = new [results.size() + 1] (results);
+        results[results.size()-1] = r;
       end
+    end
 
-      shreg = {shreg[(M-N-1):0], fifo_data[i][N-1:0]};
-
-      if (!frame_error) begin
-        i = i + 1;
-      end
-      state = (state + 1) % (M/N);
-
-      if (state == 0) begin
-        if (first) begin
-          first = 1'b0;
-        end else begin
-          results = new [results.size() + 1] (results);
-        end
-        results[results.size()-1] = '{
-                                    first : tfirst,
-                                    data : shreg
-                                    };
-      end
-    end // for (int i = 0; i < $size(fifo_data);)
     foreach (results[i]) begin
       $display("SHR = %s %h", results[i].first ? "t" : " ", results[i].data);
     end
+    $finish();
   end
 
 
@@ -224,5 +206,6 @@ module tb_axis_width_conv_narrow_wide;
   end // UNMATCHED !!
 
 
-endmodule : tb_axis_width_conv_narrow_wide
+endmodule : tb_axis_width_conv_wide_narrow
+
 `default_nettype wire

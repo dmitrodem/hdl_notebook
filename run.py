@@ -2,8 +2,9 @@
 
 import sys, os
 from pathlib import Path
-sys.path.insert(0, 
-                Path("submodules/vunit").absolute().as_posix())
+sys.path.insert(
+    0, 
+    Path("submodules/vunit").absolute().as_posix())
 
 from vunit import VUnit
 
@@ -21,4 +22,11 @@ lib.add_source_files("rtl/*.sv")
 lib.add_source_files("sim/*.sv")
 
 vu.set_sim_option("modelsim.vsim_flags", ["worklib.glbl", "-voptargs=+acc"])
+tb = lib.test_bench("tb_axis_width_conv_generic")
+for N, M, LCM in [(8,1,16),(8,2,16),(8,3,24),(8,5,40),(8,6,24),(8,7,56),
+                  (1,8,16),(2,8,16),(3,8,24),(5,8,40),(6,8,24),(7,8,56)]:
+    tb.add_config(
+        name = f"N{N}:M{M}:LCM{LCM}",
+        parameters = dict(N = N, M = M, LCM = LCM, NREQUESTS = 1024))
+
 vu.main()
