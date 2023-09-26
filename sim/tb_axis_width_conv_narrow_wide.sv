@@ -1,18 +1,15 @@
-`include "vunit_defines.svh"
-
 `timescale 1ns/100ps
 `default_nettype none
+`include "vunit_defines.svh"
 module tb_axis_width_conv_narrow_wide;
 
-  localparam N               = 8;
-  localparam M               = 24;
+  parameter N = 4;
+  parameter M = 8;
+  parameter LCM = M;
+  parameter NREQUESTS = 1024;
 
-  int        testcase        = -1;
-  int        testcase_done   = 0;
-  int        testcase_result = 0;
-
-  logic      rst             = 1'b0;
-  logic      clk             = 1'b0;
+  logic      rst;
+  logic      clk;
   logic         s_axis_tnext;
   logic [N-1:0] s_axis_tdata;
   logic         s_axis_tfirst;
@@ -56,7 +53,7 @@ module tb_axis_width_conv_narrow_wide;
     .RELATED_CLOCKS                   (0),
     .SIM_ASSERT_CHK                   (0),
     .CASCADE_HEIGHT                   (0),
-    .FIFO_WRITE_DEPTH                 (2048),
+    .FIFO_WRITE_DEPTH                 (2*NREQUESTS),
     .WRITE_DATA_WIDTH                 (N+1),
     .WR_DATA_COUNT_WIDTH              (1),
     .PROG_FULL_THRESH                 (10),
@@ -100,129 +97,181 @@ module tb_axis_width_conv_narrow_wide;
     .injectsbiterr               (1'b0),
     .injectdbiterr               (1'b0));
 
-  always #(5ns) clk = ~clk;
-
-  int reset_state = 0;
-  always_ff @(posedge clk) begin : x_reset
-    if (reset_state < 10) begin
-      reset_state = reset_state + 1;
-    end else begin
-      rst = 1'b1;
+  task generate_clock;
+    begin
+      clk = 1'b0;
+      forever #(5ns) clk = ~clk;
     end
-  end : x_reset
+  endtask : generate_clock
 
-
-  int fifo_state         = 0;
-  logic [N:0] fifo_data [0:2047];
-  logic [31:0] fifo_tmp;
-
-  typedef struct  {
-    logic         first;
-    logic [M-1:0] data;
-  } result_t;
-  result_t results[];
-
-
-  initial begin : x_init_fifo_data
-    automatic int state           = 0;
-    automatic bit tfirst          = 1'b0;
-    automatic logic [M-1:0] shreg = {M{1'b0}};
-    automatic bit frame_error     = 1'b0;
-    automatic bit first           = 1'b1;
-
-    results = new [1];
-
-    for (int i = 0; i < $size(fifo_data); i = i + 1) begin
-      fifo_tmp     = $urandom();
-      fifo_data[i] = {{1{
-                      (i == 0) ||
-                      (i == 4) ||
-                      (i == 5)
-                      }}, fifo_tmp[N-1:0]};
-      $display("%3d :: %s %h", i, (fifo_data[i][N] === 1'b1) ? "t" : " ", fifo_data[i][N-1:0]);
-    end
-
-    for (int i = 0; i < $size(fifo_data);) begin
-      if (state == 0) begin
-        frame_error = 1'b0;
-        tfirst = fifo_data[i][N];
-      end else if (fifo_data[i][N] == 1'b1) begin
-        frame_error = 1'b1;
-      end
-
-      shreg = {shreg[(M-N-1):0], fifo_data[i][N-1:0]};
-
-      if (!frame_error) begin
-        i = i + 1;
-      end
-      state = (state + 1) % (M/N);
-
-      if (state == 0) begin
-        if (first) begin
-          first = 1'b0;
+  task generate_reset;
+    begin
+      automatic int reset_state = 0;
+      rst = 1'b0;
+      for (;;) begin
+        @(posedge clk);
+        if (reset_state < 10) begin
+          reset_state = reset_state + 1;
         end else begin
-          results = new [results.size() + 1] (results);
+          rst = 1'b1;
+          break;
         end
-        results[results.size()-1] = '{
-                                    first : tfirst,
-                                    data : shreg
-                                    };
-      end
-    end // for (int i = 0; i < $size(fifo_data);)
-    foreach (results[i]) begin
-      $display("SHR = %s %h", results[i].first ? "t" : " ", results[i].data);
-    end
-  end
-
-
-  int fifo_init_state = 0;
-  always_ff @(posedge clk) begin : x_init_fifo
-    if (!((rst === 1'b0) || (fifo_wr_rst_busy === 1'b1))) begin
-      if (fifo_init_state < $size(fifo_data)) begin
-        fifo_data_in    <= fifo_data[fifo_init_state];
-        fifo_write      <= 1'b1;
-        fifo_init_state <= fifo_init_state + 1;
-      end else begin
-        fifo_write <= 1'b0;
       end
     end
-  end  : x_init_fifo
+  endtask : generate_reset
+
+  typedef struct {
+    bit first;
+    bit [N-1:0] data;
+  } request_t;
+
+  request_t requests[$];
+
+  task make_requests (
+    input bit verbose = 0,
+    input int max_disp = 10);
+    begin
+      automatic int ndisp = 0;
+      for (int i = 0; i < NREQUESTS; i = i + 1) begin
+        automatic request_t r;
+        r.data      = $urandom();
+        randcase
+          1: r.first = 1'b1;
+          10: r.first = 1'b0;
+        endcase // randcase
+        if (i == 0) r.first = 1'b1;
+        requests = {requests, r};
+        if (verbose) begin
+          if (ndisp < max_disp) begin
+            $display("%3d :: %s %h", i, (r.first === 1'b1) ? "t" : " ", r.data);
+            ndisp = ndisp + 1;
+          end
+        end
+      end // for (int i = 0; i < NREQUESTS; i = i + 1)
+    end
+  endtask : make_requests
+
+  typedef struct {
+    bit first;
+    bit [M-1:0] data;
+  } reply_t;
+
+  reply_t replies[$];
+
+  task make_replies (
+    input bit verbose = 0,
+    input int max_disp = 10);
+    begin
+      automatic bit [LCM-1:0] rhold;
+      automatic bit tfirst = 0;
+      automatic int idx    = 0;
+      static int ndisp = 0;
+      for (int i = 0; i < $size(requests);) begin
+        if (idx == 0) begin
+          tfirst = requests[i].first;
+        end
+        rhold[((LCM-1)-idx*N)-:N] = requests[i].data;
+        if ((idx == 0) || (requests[i].first == 1'b0)) begin
+          i = i + 1;
+        end
+        idx = idx + 1;
+        if (idx == LCM/N) begin
+          for (int j = 0; j < LCM; j = j + M) begin
+            if (verbose) begin
+              if (ndisp < max_disp) begin
+                $display("%3d :: %s %1h [%3b]",
+                         ndisp,
+                         ((j == 0) ? tfirst : 0) ? "t" : " ",
+                         rhold[(LCM-1-j)-:M],
+                         rhold[(LCM-1-j)-:M]);
+                ndisp = ndisp + 1;
+              end
+            end
+            replies = {replies,
+                       reply_t'({
+                       first : ((j == 0) ? tfirst : 0),
+                       data : rhold[(LCM-1-j)-:M]})};
+          end
+          idx = 0;
+        end
+      end
+    end
+  endtask : make_replies
+
+  task init_fifo;
+    begin
+      automatic int fifo_init_state = 0;
+      for(int i = 0; i < $size(requests);) begin
+        @(posedge clk);
+        if (!((rst === 1'b0) || (fifo_wr_rst_busy === 1'b1))) begin
+          fifo_data_in = {
+                          requests[i].first,
+                          requests[i].data
+                          };
+          fifo_write = 1'b1;
+          i = i + 1;
+        end
+      end // for (int i = 0; i < NREQUESTS;)
+      requests = {};
+      fifo_write = 1'b0;
+    end
+  endtask : init_fifo
+
+  task check_data (input bit verbose = 0);
+    begin
+      automatic int check_running = 0;
+      automatic int stuck_timer = 0;
+      for (int i = 0; i < $size(replies);) begin
+        @(posedge clk);
+        if (m_axis_tvalid) begin
+          automatic bit ok = (replies[i].first == m_axis_tfirst) && (replies[i].data == m_axis_tdata);
+          `CHECK_EQUAL(replies[i].first, m_axis_tfirst);
+          `CHECK_EQUAL(replies[i].data,  m_axis_tdata);
+          check_running = 1;
+          stuck_timer = 0;
+          if (verbose) begin
+            $display("%5d :: %s %h -> %s", i, m_axis_tfirst ? "t" : " ", m_axis_tdata, ok ? "[PASS]" : "[FAIL]");
+          end
+          i = i + 1;
+        end else begin // if (m_axis_tvalid)
+          if (check_running)
+            stuck_timer = stuck_timer + 1;
+        end // else: !if(m_axis_tvalid)
+        if (check_running && (stuck_timer > 1000)) begin
+          $display("Got stuck...");
+          break;
+        end
+      end // for (int i = 0; i < $size(replies);)
+      replies       = {};
+    end
+  endtask : check_data
 
   assign s_axis_tdata = fifo_data_out[N-1:0];
   assign s_axis_tfirst = fifo_data_out[N];
   assign s_axis_tvalid = ~fifo_empty;
   assign fifo_read = s_axis_tnext;
-
-  int read_out_state = 0;
-  always_ff @(posedge clk) begin : x_read_out
-    if (m_axis_tvalid) begin
-      automatic int i  = read_out_state;
-      automatic bit ok = (results[i].first == m_axis_tfirst) && (results[i].data == m_axis_tdata);
-      `CHECK_EQUAL(results[i].first, m_axis_tfirst);
-      `CHECK_EQUAL(results[i].data,  m_axis_tdata);
-      $display("Read : %d %h -> %s", m_axis_tfirst, m_axis_tdata, ok ? "[PASS]" : "[FAIL]");
-      read_out_state   = read_out_state + 1;
-      if (read_out_state == $size(results)) begin
-        results.delete();
-        testcase_done = 1;
-      end
-    end
-  end  : x_read_out
-
   assign m_axis_tnext = m_axis_tvalid;
 
   `TEST_SUITE begin
     `TEST_SUITE_SETUP begin
-
-    end // UNMATCHED !!
-
+    end
     `TEST_CASE("Test") begin
-      testcase = 0;
-      wait (testcase_done == 1);
-    end // UNMATCHED !!
-
-  end // UNMATCHED !!
-
+      fork : x_run_test
+        generate_clock();
+        generate_reset();
+        begin
+          make_requests();
+          make_replies();
+          $display("Number of replies = %d", $size(replies));
+          init_fifo();
+        end
+        begin
+          check_data();
+          disable x_run_test;
+        end
+      join
+    end
+  end
 
 endmodule : tb_axis_width_conv_narrow_wide
 `default_nettype wire

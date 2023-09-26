@@ -29,4 +29,16 @@ for N, M, LCM in [(8,1,16),(8,2,16),(8,3,24),(8,5,40),(8,6,24),(8,7,56),
         name = f"N{N}:M{M}:LCM{LCM}",
         parameters = dict(N = N, M = M, LCM = LCM, NREQUESTS = 1024))
 
+tb = lib.test_bench("tb_axis_width_conv_wide_narrow")
+for N, M in [(8,1),(8,2),(8,4)]:
+    tb.add_config(
+        name = f"N{N}:M{M}",
+        parameters = dict(N = N, M = M, NREQUESTS = 1024))
+
+tb = lib.test_bench("tb_axis_width_conv_narrow_wide")
+for N, M in [(1,8),(2,8),(4,8)]:
+    tb.add_config(
+        name = f"N{N}:M{M}",
+        parameters = dict(N = N, M = M, NREQUESTS = 1024))
+
 vu.main()
