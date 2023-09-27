@@ -36,6 +36,10 @@ module axis_width_conv_wide_narrow
       $error("Degenerate case, LCM = M");
       $finish;
     end
+    if (W_S > 15) begin
+      $error("Possible overflow at bit_count");
+      $finish;
+    end
   end
 
   logic [W_S-1:0] rlut [0:(2*KM2-1)];
@@ -61,6 +65,7 @@ module axis_width_conv_wide_narrow
     logic              tfirst;
     logic [N-1:0]      tdata;
     logic              tnext;
+    logic [W_S:0]      bitcnt;
   } register_t;
 
   localparam register_t RES_register = '{
@@ -73,11 +78,15 @@ module axis_width_conv_wide_narrow
     rfirst : 2'b00,
     tfirst : 1'b0,
     tdata : {N{1'b0}},
-    tnext : 1'b0
+    tnext : 1'b0,
+    bitcnt : {(W_S+1){1'b0}}
   };
 
   register_t r;
   register_t rin;
+
+  logic [W_S-1:0] s_wr_ptr;
+  assign s_wr_ptr = r.wr_page ? (2*LCM-1) : (LCM-1);
 
   logic [W_S-1:0] s_rd_ptr;
   assign s_rd_ptr = rlut[{r.rd_page, r.rd_ptr}];
@@ -97,11 +106,7 @@ module axis_width_conv_wide_narrow
     v.tfirst = s_axis_tfirst;
 
     if (v.tnext) begin
-      if (r.wr_page == 1'b1) begin
-        v.rshift[(2*LCM-1)-:N] = v.tdata;
-      end else begin
-        v.rshift[(LCM-1)-:N] = v.tdata;
-      end
+      v.rshift[s_wr_ptr-:N] = v.tdata;
       v.rfirst[r.wr_page] = v.tfirst;
 
       v.wr_page = ~r.wr_page;
@@ -122,6 +127,7 @@ module axis_width_conv_wide_narrow
       end
     end
 
+    v.bitcnt = {r.wr_ext, s_wr_ptr} - {r.rd_ext, s_rd_ptr};
     if (~rst) begin
       v = RES_register;
     end
@@ -139,5 +145,6 @@ module axis_width_conv_wide_narrow
   assign m_axis_tfirst = (r.rd_ptr == KM-1) ? r.rfirst[r.rd_page] : 1'b0;
   assign m_axis_tvalid = ~s_empty;
 
+  assign bit_count = {{(15-W_S){1'b0}}, r.bitcnt[W_S:0]};
 endmodule : axis_width_conv_wide_narrow
 `default_nettype wire

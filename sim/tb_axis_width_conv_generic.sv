@@ -18,6 +18,7 @@ module tb_axis_width_conv_generic;
   logic [M-1:0] m_axis_tdata;
   logic         m_axis_tfirst;
   logic         m_axis_tvalid;
+  logic [15:0]  bit_count;
 
   axis_width_conv_generic #(
     .N(N),
@@ -34,7 +35,9 @@ module tb_axis_width_conv_generic;
     .m_axis_tnext  (m_axis_tnext),
     .m_axis_tdata  (m_axis_tdata),
     .m_axis_tfirst (m_axis_tfirst),
-    .m_axis_tvalid (m_axis_tvalid));
+    .m_axis_tvalid (m_axis_tvalid),
+
+    .bit_count     (bit_count));
 
   wire fifo_full;
   wire fifo_empty;
@@ -46,6 +49,11 @@ module tb_axis_width_conv_generic;
   reg [N:0]  fifo_data_in = {(N+1){1'b0}};
   wire       fifo_read;
 
+  localparam W_CNT = $clog2(2*NREQUESTS) + 1;
+
+  logic [W_CNT-1:0] fifo_rd_data_count;
+  logic [W_CNT-1:0] fifo_wr_data_count;
+
 
   xpm_fifo_async #(
     // Parameters
@@ -56,14 +64,14 @@ module tb_axis_width_conv_generic;
     .CASCADE_HEIGHT                   (0),
     .FIFO_WRITE_DEPTH                 (2*NREQUESTS),
     .WRITE_DATA_WIDTH                 (N+1),
-    .WR_DATA_COUNT_WIDTH              (1),
+    .WR_DATA_COUNT_WIDTH              (W_CNT),
     .PROG_FULL_THRESH                 (10),
     .FULL_RESET_VALUE                 (0),
     .USE_ADV_FEATURES                 ("0404"),
     .READ_MODE                        ("fwft"),
     .FIFO_READ_LATENCY                (0),
     .READ_DATA_WIDTH                  (N+1),
-    .RD_DATA_COUNT_WIDTH              (1),
+    .RD_DATA_COUNT_WIDTH              (W_CNT),
     .PROG_EMPTY_THRESH                (10),
     .DOUT_RESET_VALUE                 ("0"),
     .CDC_SYNC_STAGES                  (2),
@@ -72,7 +80,7 @@ module tb_axis_width_conv_generic;
     // Outputs
     .full                        (fifo_full),
     .prog_full                   (),
-    .wr_data_count               (),
+    .wr_data_count               (fifo_wr_data_count),
     .overflow                    (),
     .wr_rst_busy                 (fifo_wr_rst_busy),
     .almost_full                 (),
@@ -80,7 +88,7 @@ module tb_axis_width_conv_generic;
     .dout                        (fifo_data_out[N:0]),
     .empty                       (fifo_empty),
     .prog_empty                  (),
-    .rd_data_count               (),
+    .rd_data_count               (fifo_rd_data_count),
     .underflow                   (),
     .rd_rst_busy                 (fifo_rd_rst_busy),
     .almost_empty                (),
@@ -130,7 +138,8 @@ module tb_axis_width_conv_generic;
 
   task make_requests (
     input bit verbose = 0,
-    input int max_disp = 10);
+    input int max_disp = 10,
+    input bit dont_randomize_tfirst = 0);
     begin
       automatic int ndisp = 0;
       for (int i = 0; i < NREQUESTS; i = i + 1) begin
@@ -141,6 +150,8 @@ module tb_axis_width_conv_generic;
           10: r.first = 1'b0;
         endcase // randcase
         if (i == 0) r.first = 1'b1;
+        if (dont_randomize_tfirst)
+          r.first = 1'b0;
         requests = {requests, r};
         if (verbose) begin
           if (ndisp < max_disp) begin
@@ -213,6 +224,7 @@ module tb_axis_width_conv_generic;
           i = i + 1;
         end
       end // for (int i = 0; i < NREQUESTS;)
+      @(posedge clk);
       requests = {};
       fifo_write = 1'b0;
     end
@@ -269,6 +281,21 @@ module tb_axis_width_conv_generic;
         begin
           check_data();
           disable x_run_test;
+        end
+      join
+    end
+    `TEST_CASE("SizeCheck") begin
+      force m_axis_tnext = 1'b0;
+      fork : x_size_check_test
+        generate_clock();
+        generate_reset();
+        begin
+          make_requests(.dont_randomize_tfirst(1));
+          make_replies();
+          init_fifo();
+          repeat(10) @(posedge clk);
+          `CHECK_EQUAL(NREQUESTS*N, fifo_rd_data_count*N + bit_count);
+          disable x_size_check_test;
         end
       join
     end

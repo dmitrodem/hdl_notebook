@@ -47,6 +47,10 @@ module axis_width_conv_generic
       $error("Degenerate case, LCM = M");
       $finish;
     end
+    if (W_S > 15) begin
+      $error("Possible overflow at bit_count");
+      $finish;
+    end
   end
 
   logic [W_S-1:0] wlut [0:(2*KN2-1)];
@@ -86,6 +90,7 @@ module axis_width_conv_generic
     logic              tfirst;
     logic [N-1:0]      tdata;
     logic              tnext;
+    logic [W_S:0]      bitcnt;
   } register_t;
 
   localparam register_t RES_register = '{
@@ -100,7 +105,8 @@ module axis_width_conv_generic
     frame_error : 1'b0,
     tfirst : 1'b0,
     tdata : {N{1'b0}},
-    tnext : 1'b0
+    tnext : 1'b0,
+    bitcnt : {(W_S+1){1'b0}}
   };
 
   register_t r;
@@ -160,6 +166,12 @@ module axis_width_conv_generic
       end
     end
 
+    if (r.wr_ext == r.rd_ext) begin
+      v.bitcnt = s_rd_ptr - s_wr_ptr;
+    end else begin
+      v.bitcnt = 2*LCM + s_rd_ptr - s_wr_ptr;
+    end
+
     if (~rst) begin
       v = RES_register;
     end
@@ -179,6 +191,9 @@ module axis_width_conv_generic
   assign m_axis_tfirst = (r.rd_ptr == KM-1) ? r.rfirst[r.rd_page] : 1'b0;
   assign m_axis_tvalid = ~s_empty;
 
+  assign bit_count = {{(15-W_S){1'b0}}, r.bitcnt[W_S:0]};
+
+  assert property (@(posedge clk) disable iff (~rst) r.bitcnt <= 2*LCM) else $error("r.bitcnt should not exceed 2*LCM: %d %d", r.bitcnt, 2*LCM);
 endmodule : axis_width_conv_generic
 
 `default_nettype wire
